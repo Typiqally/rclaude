@@ -1,6 +1,7 @@
 //! Access to the official CLI's credentials, confined to this process.
 use crate::protocol::ErrorCode;
 use serde_json::Value;
+#[cfg(target_os = "macos")]
 use sha2::{Digest, Sha256};
 use std::{
     fmt,
@@ -61,6 +62,7 @@ fn config_directory() -> Result<PathBuf, ErrorCode> {
             .join(".claude"),
     )
 }
+#[cfg(target_os = "macos")]
 fn keychain_service() -> Result<String, ErrorCode> {
     let override_dir = std::env::var("CLAUDE_SECURESTORAGE_CONFIG_DIR").ok();
     let custom = override_dir
@@ -91,35 +93,78 @@ enum Location {
     },
     File(PathBuf),
 }
-fn read() -> Result<(Location, Zeroizing<Vec<u8>>), ErrorCode> {
+type CredentialRecord = (Location, Zeroizing<Vec<u8>>);
+fn read() -> Result<CredentialRecord, ErrorCode> {
     #[cfg(target_os = "macos")]
     {
-        let service = keychain_service()?;
-        let account = std::env::var("USER")
-            .ok()
-            .filter(|s| {
-                !s.is_empty()
-                    && s.bytes()
-                        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-            })
-            .unwrap_or_else(|| "claude-code-user".into());
-        if let Ok(Ok(mut items)) = without_keychain_ui(|| {
-            use security_framework::item::{ItemClass, ItemSearchOptions};
-            ItemSearchOptions::new()
-                .class(ItemClass::generic_password())
-                .service(&service)
-                .account(&account)
-                .load_data(true)
-                .skip_authenticated_items(true)
-                .search()
-        }) && let Some(security_framework::item::SearchResult::Data(data)) = items.pop()
+        credential_fallback(read_keychain(), read_file)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        read_file()
+    }
+}
+#[cfg(target_os = "macos")]
+fn credential_fallback(
+    keychain: Result<CredentialRecord, ErrorCode>,
+    file: impl FnOnce() -> Result<CredentialRecord, ErrorCode>,
+) -> Result<CredentialRecord, ErrorCode> {
+    match keychain {
+        Ok(record) => Ok(record),
+        Err(keychain_error) => match file() {
+            Err(ErrorCode::AuthenticationRequired) => Err(keychain_error),
+            result => result,
+        },
+    }
+}
+#[cfg(target_os = "macos")]
+fn read_keychain() -> Result<CredentialRecord, ErrorCode> {
+    let service = keychain_service()?;
+    let account = std::env::var("USER")
+        .ok()
+        .filter(|s| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        })
+        .unwrap_or_else(|| "claude-code-user".into());
+    without_keychain_ui(|| {
+        use security_framework::item::{ItemClass, ItemSearchOptions, SearchResult};
+        let data = ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(&service)
+            .account(&account)
+            .load_data(true)
+            .skip_authenticated_items(true)
+            .search();
+        if let Ok(mut items) = data
+            && let Some(SearchResult::Data(bytes)) = items.pop()
         {
             return Ok((
                 Location::Keychain { service, account },
-                Zeroizing::new(data),
+                Zeroizing::new(bytes),
             ));
         }
-    }
+        // UISkip hides denied password items as "not found". Read only the matching
+        // item's attributes to distinguish a missing login from denied access.
+        // Both searches keep the process UI guard and per-query skip policy.
+        let exists = ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(&service)
+            .account(&account)
+            .load_attributes(true)
+            .load_data(false)
+            .skip_authenticated_items(true)
+            .search()
+            .is_ok_and(|items| !items.is_empty());
+        Err(if exists {
+            ErrorCode::CredentialAccessDenied
+        } else {
+            ErrorCode::AuthenticationRequired
+        })
+    })?
+}
+fn read_file() -> Result<CredentialRecord, ErrorCode> {
     let path = config_directory()?.join(".credentials.json");
     let meta = std::fs::symlink_metadata(&path).map_err(|_| ErrorCode::AuthenticationRequired)?;
     if !meta.is_file() || meta.len() > 64 * 1024 {
@@ -237,22 +282,55 @@ pub(crate) fn organization() -> Option<String> {
 mod tests {
     #[test]
     fn absent_fallback_preserves_denied_keychain_access() {
-        let result = super::credential_fallback(Err(super::ErrorCode::CredentialAccessDenied), || Err(super::ErrorCode::AuthenticationRequired));
-        assert!(matches!(result, Err(super::ErrorCode::CredentialAccessDenied)));
+        let result =
+            super::credential_fallback(Err(super::ErrorCode::CredentialAccessDenied), || {
+                Err(super::ErrorCode::AuthenticationRequired)
+            });
+        assert!(matches!(
+            result,
+            Err(super::ErrorCode::CredentialAccessDenied)
+        ));
     }
     #[test]
     fn missing_login_and_insecure_fallback_are_distinct_from_denied_keychain_access() {
-        let absent = super::credential_fallback(Err(super::ErrorCode::AuthenticationRequired), || Err(super::ErrorCode::AuthenticationRequired));
-        assert!(matches!(absent, Err(super::ErrorCode::AuthenticationRequired)));
-        let insecure = super::credential_fallback(Err(super::ErrorCode::CredentialAccessDenied), || Err(super::ErrorCode::PermissionDenied));
+        let absent =
+            super::credential_fallback(Err(super::ErrorCode::AuthenticationRequired), || {
+                Err(super::ErrorCode::AuthenticationRequired)
+            });
+        assert!(matches!(
+            absent,
+            Err(super::ErrorCode::AuthenticationRequired)
+        ));
+        let insecure =
+            super::credential_fallback(Err(super::ErrorCode::CredentialAccessDenied), || {
+                Err(super::ErrorCode::PermissionDenied)
+            });
         assert!(matches!(insecure, Err(super::ErrorCode::PermissionDenied)));
     }
     #[test]
     fn an_existing_official_file_can_supply_credentials_when_keychain_access_is_denied() {
-        let from_file = super::credential_fallback(Err(super::ErrorCode::CredentialAccessDenied), || Ok((super::Location::File("official-fixture".into()), zeroize::Zeroizing::new(b"fixture".to_vec()))));
+        let from_file =
+            super::credential_fallback(Err(super::ErrorCode::CredentialAccessDenied), || {
+                Ok((
+                    super::Location::File("official-fixture".into()),
+                    zeroize::Zeroizing::new(b"fixture".to_vec()),
+                ))
+            });
         assert!(matches!(from_file, Ok((super::Location::File(_), _))));
-        let from_keychain = super::credential_fallback(Ok((super::Location::Keychain { service:"fixture".into(), account:"fixture".into() }, zeroize::Zeroizing::new(b"fixture".to_vec()))), || panic!("a usable credential must not probe another source"));
-        assert!(matches!(from_keychain, Ok((super::Location::Keychain { .. }, _))));
+        let from_keychain = super::credential_fallback(
+            Ok((
+                super::Location::Keychain {
+                    service: "fixture".into(),
+                    account: "fixture".into(),
+                },
+                zeroize::Zeroizing::new(b"fixture".to_vec()),
+            )),
+            || panic!("a usable credential must not probe another source"),
+        );
+        assert!(matches!(
+            from_keychain,
+            Ok((super::Location::Keychain { .. }, _))
+        ));
     }
     #[test]
     fn keychain_reads_and_writes_cannot_open_an_access_dialog() {

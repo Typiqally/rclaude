@@ -58,3 +58,12 @@ with Keychain interaction disabled. No prompts were retried and no real
 conversations were modified. Real Claude discovery, complete history from every
 native client, paging/catch-up, continuation, interruption, and credential
 isolation remain release prerequisites. The broker stays experimental.
+
+Follow-up noninteractive diagnosis on 2026-10-09 confirmed that the matching
+official Keychain credential record exists, but macOS refuses broker access
+(`errSecAuthFailed`). No credential contents were returned or logged. The broker
+now distinguishes this as `credential_access_denied` rather than a missing login.
+The process UI guard and per-query skip policy remain enabled; an existing private
+official credential file remains a valid fallback. No ACL changes, exports, login
+attempts, or interactive prompts were performed. Real-service qualification remains
+blocked until official credentials are accessible noninteractively.

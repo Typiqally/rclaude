@@ -149,3 +149,10 @@ and does not imply endorsement. No official application source or assets are
 redistributed.
 
 Native Claude cloud conversations use the [version 1 broker contract](docs/broker-contract.md), including bounded discovery, immutable paged history, original-session continuation, and interruption. Local contract tests pass; real-service qualification remains blocked by noninteractive `authentication_required`. This support is experimental.
+
+If `auth-status` reports `credential_access_denied`, the official credential record
+is present but macOS has denied this broker access. Interactive Keychain access
+stays disabled. Repeated login attempts or broker retries will not solve that
+access denial; real-service qualification must wait for legitimate noninteractive
+credential availability. Do not export tokens into Bluedex or change Keychain ACLs
+automatically.

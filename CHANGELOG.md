@@ -5,6 +5,8 @@ the package version in `Cargo.toml`.
 
 ## Unreleased
 
+- Distinguish denied noninteractive official Keychain access from a missing login, without enabling prompts or exposing credentials.
+
 - Implement native cloud discovery and immutable paged canonical history across clients.
 - Continue, subscribe, and interrupt the original session with UUID correlation and monotonic durable sequences.
 - Reject incomplete catch-up and oversized events explicitly; whitelist metadata and streamed envelopes.

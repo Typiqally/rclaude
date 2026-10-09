@@ -23,3 +23,9 @@ Worker SDK events and ephemeral stream events become broker events. Client resul
 Static observation does not establish account availability or protocol stability. Session reads worked live; isolated creation returned HTTP 400 and needs diagnosis against legitimate account capabilities. Real upload/readback is pending. Avoid retry loops, interactive credential prompts, or changing request shapes without new evidence.
 
 The native version 1 contract is implemented and locally verified; see [broker contract](broker-contract.md). The updated noninteractive live discovery check returned `authentication_required` on 2026-10-09, so real-service history/continuation qualification remains outstanding.
+
+Follow-up diagnosis: official Keychain metadata matched the expected service and
+account, but a UI-disabled read returned `errSecAuthFailed` (-25293). This is an
+OS access denial rather than an absent login. The updated broker reports
+`credential_access_denied`, preserves its noninteractive guards, and does not
+retry prompts. Real-service qualification is still blocked.
