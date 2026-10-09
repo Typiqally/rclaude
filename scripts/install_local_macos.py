@@ -99,6 +99,7 @@ def main():
     try:
         shutil.copyfile(source, staged)
         staged.chmod(0o755)
+        print("macOS may request use of the local signing key. Approve in the system dialog.", flush=True)
         run(["/usr/bin/codesign", "--force", "--sign", fingerprint, "--timestamp=none",
              "--identifier", IDENTIFIER, "--requirements", requirement(fingerprint), str(staged)], timeout=600)
         run(["/usr/bin/codesign", "--verify", "--strict", str(staged)])
