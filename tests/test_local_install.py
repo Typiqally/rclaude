@@ -1,6 +1,8 @@
 import importlib.util
 import pathlib
 import unittest
+import json
+import tempfile
 from unittest.mock import patch
 
 ROOT=pathlib.Path(__file__).resolve().parents[1]
@@ -59,5 +61,40 @@ class LocalSigningTests(unittest.TestCase):
             self.assertEqual(module.ensure_identity(run),key)
         self.assertTrue(locations)
         self.assertTrue(all(not path.exists() for path in locations))
+    def test_engine_updates_preserve_the_authorized_launcher_bytes(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=pathlib.Path(directory)
+            destination=root/'rclaude'
+            destination.write_bytes(b'authorized launcher')
+            source=root/'new-engine.dylib'
+            source.write_bytes(b'new signed engine')
+            key='A'*40
+            def run(args,**kwargs):
+                if args[-1]=='--launcher-info':
+                    return json.dumps({'launcherVersion':1,'engineAbiVersion':1,'certificateSha1':key})
+                return ''
+            module.install_pair(None,source,destination,key,run)
+            self.assertEqual(destination.read_bytes(),b'authorized launcher')
+            engine=root/'.rclaude'/'engine.dylib'
+            self.assertEqual(engine.read_bytes(),b'new signed engine')
+            self.assertEqual(engine.stat().st_mode & 0o777,0o600)
+    def test_failed_engine_verification_preserves_the_installed_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root=pathlib.Path(directory)
+            destination=root/'rclaude'
+            destination.write_bytes(b'authorized launcher')
+            engine=root/'.rclaude'/'engine.dylib'
+            engine.parent.mkdir();engine.write_bytes(b'old engine')
+            source=root/'new-engine.dylib';source.write_bytes(b'new engine')
+            key='A'*40
+            def run(args,**kwargs):
+                if args[-1]=='--launcher-info':
+                    return json.dumps({'launcherVersion':1,'engineAbiVersion':1,'certificateSha1':key})
+                if '--verify' in args and '.rclaude-engine-' in args[-1]:
+                    raise RuntimeError('synthetic rejected signature')
+                return ''
+            with self.assertRaises(RuntimeError): module.install_pair(None,source,destination,key,run)
+            self.assertEqual(destination.read_bytes(),b'authorized launcher')
+            self.assertEqual(engine.read_bytes(),b'old engine')
 
 if __name__=='__main__': unittest.main()
