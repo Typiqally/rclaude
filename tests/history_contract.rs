@@ -29,6 +29,18 @@ fn metadata_covers_clients_without_exporting_credentials_or_url_secrets() {
         assert!(!summary.to_string().contains("secret"));
     }
 }
+
+#[test]
+fn archived_sessions_are_discoverable_when_their_worker_state_is_obsolete() {
+    for worker in ["retired-native-state", "running"] {
+        let summary = session_summary(&json!({"id":"cse_archived","title":"Archived", "created_at":"2026-10-09T10:00:00Z","status":"archived","worker_status":worker})).unwrap();
+        assert_eq!(summary["id"], "cse_archived");
+        assert_eq!(summary["archived"], true);
+        assert_eq!(summary["status"], "stopped");
+    }
+    let summary = session_summary(&json!({"id":"cse_archived","created_at":"2026-10-09T10:00:00Z","archived":true,"worker_status":"retired-native-state"})).unwrap();
+    assert_eq!(summary["status"], "stopped");
+}
 #[test]
 fn canonical_history_keeps_every_clients_messages_and_drops_auth_and_private_thinking() {
     let user = canonical_event(&row("event-user", 3, "desktop", "user", json!("question")))
