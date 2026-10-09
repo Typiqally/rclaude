@@ -25,5 +25,18 @@ fn unknown_native_states_and_collection_keys_never_become_diagnostic_values() {
     ]}));
     assert_eq!(report["unknownWorkerStates"], 1);
     assert!(!report.to_string().contains("private"));
-    assert_eq!(collection_schema(&json!({"data":{"secret":"value"}}))["dataType"], "object");
+    assert_eq!(
+        collection_schema(&json!({"data":{"secret":"value"}}))["dataType"],
+        "object"
+    );
+}
+
+#[test]
+fn diagnostics_separate_archived_worker_states_without_disclosing_them() {
+    let report = collection_schema(&json!({"data":[
+        {"id":"cse_a","created_at":"2026-10-09T10:00:00Z","status":"archived","worker_status":"private-retired-state"},
+        {"id":"cse_b","created_at":"2026-10-09T10:00:00Z","archived":true,"worker_status":"another-private-state"}
+    ]}));
+    assert_eq!(report["unknownArchivedStates"], 2);
+    assert!(!report.to_string().contains("private"));
 }
