@@ -70,6 +70,11 @@ Read-only subscriptions accepted continuation after a history snapshot and repla
 from zero; 307 replayed durable events had strictly increasing sequences. Live
 truncated catch-up remains unqualified.
 
+The read-only sweep checked all 108 discovered sessions: 72 complete histories
+returned 32,163 canonical events across 695 broker pages; 35 sessions returned
+`too_large` and one returned `incompatible_version`. These failures prevent
+all-session qualification and were never reported as complete partial histories.
+
 No existing conversation was modified by these checks. Only aggregate counts,
 static schema labels, and fixed error codes were printed; credentials, record
 identifiers, titles, and transcripts were not logged or committed. Complete

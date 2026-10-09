@@ -45,3 +45,8 @@ zero; 307 replayed durable events had strictly increasing sequences.
 Only aggregate counts and fixed diagnostic labels were printed; no credentials,
 private identifiers, titles, or transcripts were logged or committed. Existing
 conversations were not changed.
+
+The complete read-only sweep checked 108 sessions: 72 histories passed with
+32,163 canonical events across 695 broker pages. Thirty-five returned explicit
+size errors and one returned `incompatible_version`; their complete history is
+unqualified. No conversation was modified.
