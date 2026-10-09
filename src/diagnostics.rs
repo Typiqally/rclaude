@@ -46,6 +46,7 @@ pub fn collection_schema(value: &Value) -> Value {
     let mut invalid_ids = 0;
     let mut errors = 0;
     let mut unknown_states = 0;
+    let mut unknown_archived_states = 0;
     let mut absent_states = 0;
     for row in data.as_array().into_iter().flatten() {
         if row["created_at"].is_null() {
@@ -72,6 +73,9 @@ pub fn collection_schema(value: &Value) -> Value {
                     states.insert((*label).into(), json!(count));
                 } else {
                     unknown_states += 1;
+                    if row["status"] == "archived" || row["archived"] == true {
+                        unknown_archived_states += 1;
+                    }
                 }
             }
             None => absent_states += 1,
@@ -81,5 +85,6 @@ pub fn collection_schema(value: &Value) -> Value {
         "responseShapePresent":value.get("response_shape").is_some(),"sessionsArray":value["sessions"].is_array(),
         "pageCursorPresent":!value["next_cursor"].is_null(),"hasMore":value["has_more"]==true,
         "missingCreatedAt":missing_created,"invalidCreatedAt":invalid_created,"invalidSessionIds":invalid_ids,
-        "summaryErrors":errors,"knownWorkerStates":states,"unknownWorkerStates":unknown_states,"absentWorkerStates":absent_states})
+        "summaryErrors":errors,"knownWorkerStates":states,"unknownWorkerStates":unknown_states,
+        "unknownArchivedStates":unknown_archived_states,"absentWorkerStates":absent_states})
 }
