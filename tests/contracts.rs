@@ -41,3 +41,28 @@ fn sends_a_stable_uuid_wrapped_user_event_without_auth_material() {
         })
     );
 }
+
+#[test]
+fn broker_advertises_native_cloud_history_without_reading_credentials() {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rclaude"))
+        .arg("broker")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"{\"version\":1,\"id\":1,\"type\":\"handshake\",\"minimumVersion\":1,\"maximumVersion\":1}\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    for name in ["sessionDiscovery", "history", "transcript", "interrupt"] {
+        assert_eq!(response["result"]["capabilities"][name], true, "{name}");
+    }
+    assert!(
+        response["result"]["maximumFrameBytes"]
+            .as_u64()
+            .is_some_and(|size| size > 0 && size <= 65536)
+    );
+}

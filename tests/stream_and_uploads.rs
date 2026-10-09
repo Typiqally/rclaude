@@ -45,3 +45,44 @@ fn closing_a_session_releases_its_uncommitted_uploads() {
     assert!(uploads.chunk(&first, 0, "eA==").is_err());
     assert!(uploads.chunk(&second, 0, "eA==").is_ok());
 }
+
+#[test]
+fn truncated_catchup_is_an_explicit_history_error() {
+    assert_eq!(
+        SseDecoder::default()
+            .push(b"event: catch_up_truncated\ndata: {}\n\n")
+            .unwrap_err(),
+        ErrorCode::HistoryIncomplete
+    );
+}
+#[test]
+fn subscriptions_only_forward_monotonic_durable_events_after_the_snapshot() {
+    use rclaude::stream::SequenceGate;
+    use serde_json::json;
+    let mut gate = SequenceGate::new(7);
+    assert!(
+        gate.accept(&json!({"sequence":7,"payload":{"type":"result"}}))
+            .unwrap()
+            .is_none()
+    );
+    assert!(
+        gate.accept(&json!({"sequence":0,"payload":{"type":"stream_event"}}))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        gate.accept(&json!({"sequence":9,"payload":{"type":"user","uuid":"own"}}))
+            .unwrap(),
+        Some(9)
+    );
+    assert!(
+        gate.accept(&json!({"sequence":8,"payload":{"type":"result"}}))
+            .unwrap()
+            .is_none()
+    );
+    assert_eq!(
+        gate.accept(&json!({"sequence":0,"payload":{"type":"result"}}))
+            .unwrap_err(),
+        ErrorCode::HistoryIncomplete
+    );
+}
