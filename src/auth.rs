@@ -236,6 +236,25 @@ pub(crate) fn organization() -> Option<String> {
 #[cfg(all(test, target_os = "macos"))]
 mod tests {
     #[test]
+    fn absent_fallback_preserves_denied_keychain_access() {
+        let result = super::credential_fallback(Err(super::ErrorCode::CredentialAccessDenied), || Err(super::ErrorCode::AuthenticationRequired));
+        assert!(matches!(result, Err(super::ErrorCode::CredentialAccessDenied)));
+    }
+    #[test]
+    fn missing_login_and_insecure_fallback_are_distinct_from_denied_keychain_access() {
+        let absent = super::credential_fallback(Err(super::ErrorCode::AuthenticationRequired), || Err(super::ErrorCode::AuthenticationRequired));
+        assert!(matches!(absent, Err(super::ErrorCode::AuthenticationRequired)));
+        let insecure = super::credential_fallback(Err(super::ErrorCode::CredentialAccessDenied), || Err(super::ErrorCode::PermissionDenied));
+        assert!(matches!(insecure, Err(super::ErrorCode::PermissionDenied)));
+    }
+    #[test]
+    fn an_existing_official_file_can_supply_credentials_when_keychain_access_is_denied() {
+        let from_file = super::credential_fallback(Err(super::ErrorCode::CredentialAccessDenied), || Ok((super::Location::File("official-fixture".into()), zeroize::Zeroizing::new(b"fixture".to_vec()))));
+        assert!(matches!(from_file, Ok((super::Location::File(_), _))));
+        let from_keychain = super::credential_fallback(Ok((super::Location::Keychain { service:"fixture".into(), account:"fixture".into() }, zeroize::Zeroizing::new(b"fixture".to_vec()))), || panic!("a usable credential must not probe another source"));
+        assert!(matches!(from_keychain, Ok((super::Location::Keychain { .. }, _))));
+    }
+    #[test]
     fn keychain_reads_and_writes_cannot_open_an_access_dialog() {
         let allowed = super::without_keychain_ui(|| {
             security_framework::os::macos::keychain::SecKeychain::user_interaction_allowed()
