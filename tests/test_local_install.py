@@ -16,6 +16,7 @@ class LocalSigningTests(unittest.TestCase):
     def test_requirement_pins_certificate_and_identifier(self):
         key='A'*40
         requirement=module.requirement(key)
+        self.assertTrue(requirement.startswith("=designated =>"))
         self.assertIn('certificate leaf = H"'+key+'"',requirement)
         self.assertIn('identifier "io.github.typiqally.rclaude"',requirement)
         with self.assertRaises(ValueError): module.requirement('" or true')
