@@ -1,0 +1,11 @@
+/target/
+.DS_Store
+.env
+.env.*
+!.env.example
+.credentials.json
+.claude.json
+auth.json
+state.json
+__pycache__/
+*.pyc

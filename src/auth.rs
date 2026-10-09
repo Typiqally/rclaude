@@ -1,0 +1,257 @@
+//! Access to the official CLI's credentials, confined to this process.
+use crate::protocol::ErrorCode;
+use serde_json::Value;
+use sha2::{Digest, Sha256};
+use std::{
+    fmt,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
+use zeroize::Zeroizing;
+
+pub struct OAuthToken {
+    access: Zeroizing<String>,
+    refresh: Option<Zeroizing<String>>,
+    expires_at: u64,
+}
+impl fmt::Debug for OAuthToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("OAuthToken(<redacted>)")
+    }
+}
+impl OAuthToken {
+    pub fn from_json(bytes: &[u8]) -> Result<Self, ErrorCode> {
+        if bytes.len() > 64 * 1024 {
+            return Err(ErrorCode::AuthenticationRequired);
+        }
+        let document: Value =
+            serde_json::from_slice(bytes).map_err(|_| ErrorCode::AuthenticationRequired)?;
+        let oauth = &document["claudeAiOauth"];
+        let access = oauth["accessToken"]
+            .as_str()
+            .filter(|s| !s.is_empty() && s.len() < 16384)
+            .ok_or(ErrorCode::AuthenticationRequired)?;
+        Ok(Self {
+            access: Zeroizing::new(access.to_owned()),
+            refresh: oauth["refreshToken"]
+                .as_str()
+                .map(|s| Zeroizing::new(s.to_owned())),
+            expires_at: oauth["expiresAt"].as_u64().unwrap_or(0),
+        })
+    }
+    pub(crate) fn access(&self) -> &str {
+        &self.access
+    }
+    pub(crate) fn expired(&self) -> bool {
+        self.expires_at
+            <= SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64
+                + 60_000
+    }
+}
+
+fn config_directory() -> Result<PathBuf, ErrorCode> {
+    if let Some(dir) = std::env::var_os("CLAUDE_CONFIG_DIR").filter(|s| !s.is_empty()) {
+        return Ok(dir.into());
+    }
+    Ok(
+        PathBuf::from(std::env::var_os("HOME").ok_or(ErrorCode::AuthenticationRequired)?)
+            .join(".claude"),
+    )
+}
+fn keychain_service() -> Result<String, ErrorCode> {
+    let override_dir = std::env::var("CLAUDE_SECURESTORAGE_CONFIG_DIR").ok();
+    let custom = override_dir
+        .as_ref()
+        .map(|s| !s.is_empty())
+        .unwrap_or(std::env::var_os("CLAUDE_CONFIG_DIR").is_some());
+    let directory = override_dir
+        .filter(|s| !s.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or(config_directory()?);
+    let suffix = if custom {
+        format!(
+            "-{:x}",
+            Sha256::digest(directory.to_string_lossy().as_bytes())
+        )[..9]
+            .to_owned()
+    } else {
+        String::new()
+    };
+    Ok(format!("Claude Code-credentials{suffix}"))
+}
+
+enum Location {
+    #[cfg(target_os = "macos")]
+    Keychain {
+        service: String,
+        account: String,
+    },
+    File(PathBuf),
+}
+fn read() -> Result<(Location, Zeroizing<Vec<u8>>), ErrorCode> {
+    #[cfg(target_os = "macos")]
+    {
+        let service = keychain_service()?;
+        let account = std::env::var("USER")
+            .ok()
+            .filter(|s| {
+                !s.is_empty()
+                    && s.bytes()
+                        .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+            })
+            .unwrap_or_else(|| "claude-code-user".into());
+        if let Ok(Ok(mut items)) = without_keychain_ui(|| {
+            use security_framework::item::{ItemClass, ItemSearchOptions};
+            ItemSearchOptions::new()
+                .class(ItemClass::generic_password())
+                .service(&service)
+                .account(&account)
+                .load_data(true)
+                .skip_authenticated_items(true)
+                .search()
+        }) && let Some(security_framework::item::SearchResult::Data(data)) = items.pop()
+        {
+            return Ok((
+                Location::Keychain { service, account },
+                Zeroizing::new(data),
+            ));
+        }
+    }
+    let path = config_directory()?.join(".credentials.json");
+    let meta = std::fs::symlink_metadata(&path).map_err(|_| ErrorCode::AuthenticationRequired)?;
+    if !meta.is_file() || meta.len() > 64 * 1024 {
+        return Err(ErrorCode::AuthenticationRequired);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        if meta.permissions().mode() & 0o077 != 0 {
+            return Err(ErrorCode::PermissionDenied);
+        }
+    }
+    let data = std::fs::read(&path).map_err(|_| ErrorCode::AuthenticationRequired)?;
+    Ok((Location::File(path), Zeroizing::new(data)))
+}
+
+/// Refresh only inside the isolated controller; never return credentials on IPC.
+pub async fn load() -> Result<OAuthToken, ErrorCode> {
+    let (location, original) = read()?;
+    let token = OAuthToken::from_json(&original)?;
+    if !token.expired() {
+        return Ok(token);
+    }
+    let refresh = token
+        .refresh
+        .as_ref()
+        .ok_or(ErrorCode::AuthenticationRequired)?;
+    let http = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .timeout(std::time::Duration::from_secs(20))
+        .build()
+        .map_err(|_| ErrorCode::Unavailable)?;
+    let response = http.post("https://platform.claude.com/v1/oauth/token").json(&serde_json::json!({"grant_type":"refresh_token","refresh_token":refresh.as_str(),"client_id":"9d1c250a-e61b-44d9-88ed-5944d1962f5e"})).send().await.map_err(|_| ErrorCode::AuthenticationRequired)?;
+    if !response.status().is_success() {
+        return Err(ErrorCode::AuthenticationRequired);
+    }
+    let value: Value = response
+        .json()
+        .await
+        .map_err(|_| ErrorCode::AuthenticationRequired)?;
+    let access = value["access_token"]
+        .as_str()
+        .filter(|s| !s.is_empty())
+        .ok_or(ErrorCode::AuthenticationRequired)?;
+    // Re-read before updating so a concurrent official CLI refresh is not overwritten.
+    let (_, current) = read()?;
+    if current.as_slice() != original.as_slice() {
+        return OAuthToken::from_json(&current);
+    }
+    let mut document: Value =
+        serde_json::from_slice(&original).map_err(|_| ErrorCode::AuthenticationRequired)?;
+    document["claudeAiOauth"]["accessToken"] = Value::String(access.to_owned());
+    document["claudeAiOauth"]["refreshToken"] = Value::String(
+        value["refresh_token"]
+            .as_str()
+            .unwrap_or(refresh)
+            .to_owned(),
+    );
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis() as u64;
+    document["claudeAiOauth"]["expiresAt"] =
+        (now + value["expires_in"].as_u64().unwrap_or(3600) * 1000).into();
+    let bytes = Zeroizing::new(
+        serde_json::to_vec(&document).map_err(|_| ErrorCode::AuthenticationRequired)?,
+    );
+    match location {
+        #[cfg(target_os = "macos")]
+        Location::Keychain { service, account } => without_keychain_ui(|| {
+            security_framework::passwords::set_generic_password(&service, &account, &bytes)
+        })?
+        .map_err(|_| ErrorCode::AuthenticationRequired)?,
+        Location::File(path) => {
+            use std::io::Write;
+            let mut file = tempfile::NamedTempFile::new_in(
+                path.parent().ok_or(ErrorCode::AuthenticationRequired)?,
+            )
+            .map_err(|_| ErrorCode::AuthenticationRequired)?;
+            file.write_all(&bytes)
+                .map_err(|_| ErrorCode::AuthenticationRequired)?;
+            file.as_file()
+                .sync_all()
+                .map_err(|_| ErrorCode::AuthenticationRequired)?;
+            file.persist(path)
+                .map_err(|_| ErrorCode::AuthenticationRequired)?;
+        }
+    }
+    OAuthToken::from_json(&bytes)
+}
+
+/// A path-free diagnostic; no token contents or identifiers are returned.
+pub fn status() -> Result<bool, ErrorCode> {
+    let (_, bytes) = read()?;
+    Ok(!OAuthToken::from_json(&bytes)?.expired())
+}
+
+/// Organization metadata belongs to the official CLI, and remains inside the broker.
+pub(crate) fn organization() -> Option<String> {
+    let path = if std::env::var_os("CLAUDE_CONFIG_DIR").is_some() {
+        config_directory().ok()?.join(".claude.json")
+    } else {
+        PathBuf::from(std::env::var_os("HOME")?).join(".claude.json")
+    };
+    let metadata = std::fs::symlink_metadata(&path).ok()?;
+    if !metadata.is_file() || metadata.len() > 4 * 1024 * 1024 {
+        return None;
+    }
+    let value: Value = serde_json::from_slice(&std::fs::read(path).ok()?).ok()?;
+    let org = value["oauthAccount"]["organizationUuid"].as_str()?;
+    uuid::Uuid::parse_str(org).ok().map(|id| id.to_string())
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod tests {
+    #[test]
+    fn keychain_reads_and_writes_cannot_open_an_access_dialog() {
+        let allowed = super::without_keychain_ui(|| {
+            security_framework::os::macos::keychain::SecKeychain::user_interaction_allowed()
+                .unwrap()
+        })
+        .unwrap();
+        assert!(!allowed);
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn without_keychain_ui<T>(operation: impl FnOnce() -> T) -> Result<T, ErrorCode> {
+    static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _lock = LOCK.lock().map_err(|_| ErrorCode::AuthenticationRequired)?;
+    let _no_dialogs =
+        security_framework::os::macos::keychain::SecKeychain::disable_user_interaction()
+            .map_err(|_| ErrorCode::AuthenticationRequired)?;
+    Ok(operation())
+}
