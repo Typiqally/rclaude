@@ -86,3 +86,10 @@ fn subscriptions_only_forward_monotonic_durable_events_after_the_snapshot() {
         ErrorCode::HistoryIncomplete
     );
 }
+
+#[test]
+fn subscription_envelopes_exclude_upstream_authentication_metadata() {
+    let events = SseDecoder::default().push(b"event: client_event\nid: 12\ndata: {\"source\":\"worker\",\"accessToken\":\"private-row\",\"payload\":{\"type\":\"result\",\"result\":\"done\",\"accessToken\":\"private-payload\",\"refreshToken\":\"private-refresh\"}}\n\n").unwrap();
+    assert_eq!(events[0]["payload"]["result"], "done");
+    assert!(!serde_json::to_string(&events).unwrap().contains("private-"));
+}

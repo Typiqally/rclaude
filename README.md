@@ -21,7 +21,7 @@ rclaude broker ────── Anthropic session / Files APIs ─────
 - Session listing and connection to an existing Claude Code cloud session.
 - The official Claude terminal interface for interactive conversations and approvals.
 - File staging before opening that interface, with remote mount paths printed locally.
-- A versioned JSON-lines broker for session open/create, uploads, turns,
+- A versioned JSON-lines broker for native discovery, complete snapshot history, session open/create, uploads, turns,
   interruption, and controller events.
 - A Rust controller with no Node runtime dependency of its own.
 
@@ -147,3 +147,5 @@ Available under the [MIT License](LICENSE). Anthropic, Claude, and Claude Code
 are trademarks of their respective owners. Their use describes compatibility
 and does not imply endorsement. No official application source or assets are
 redistributed.
+
+Native Claude cloud conversations use the [version 1 broker contract](docs/broker-contract.md), including bounded discovery, immutable paged history, original-session continuation, and interruption. Local contract tests pass; real-service qualification remains blocked by noninteractive `authentication_required`. This support is experimental.

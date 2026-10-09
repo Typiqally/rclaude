@@ -3,6 +3,13 @@
 Notable changes are recorded here. Release tags use `vMAJOR.MINOR.PATCH` and match
 the package version in `Cargo.toml`.
 
+## Unreleased
+
+- Implement native cloud discovery and immutable paged canonical history across clients.
+- Continue, subscribe, and interrupt the original session with UUID correlation and monotonic durable sequences.
+- Reject incomplete catch-up and oversized events explicitly; whitelist metadata and streamed envelopes.
+- Local contract fixtures pass. Real-service qualification remains blocked by noninteractive authentication and is required before a qualified release.
+
 ## [Unreleased]
 
 ### Added

@@ -7,3 +7,5 @@ pub mod client;
 
 pub mod broker;
 pub mod stream;
+
+pub mod history;

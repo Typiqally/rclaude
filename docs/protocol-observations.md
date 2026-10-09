@@ -9,6 +9,7 @@ Observed interfaces:
 | Operation | Interface |
 | --- | --- |
 | List sessions | `GET /v1/code/sessions?limit=100`, `data` array |
+| Read history | `GET /v1/code/sessions/<id>/events`, `limit`, `sort_order`, `cursor`; `data` and `next_cursor` |
 | Read session | `GET /v1/code/sessions/<id>`, observed `response_shape` wrapper |
 | Create session | `POST /v1/code/sessions`, title, initial events, environment ID and config sources |
 | Send user/control event | `POST /v1/code/sessions/<id>/events`, payload-wrapped event with stable UUID |
@@ -20,3 +21,5 @@ Observed interfaces:
 Worker SDK events and ephemeral stream events become broker events. Client results cannot masquerade as worker completion. Plain user UUID echoes can identify the current turn. Upstream error bodies remain private and become typed error codes. Device-binding refusals require official enrollment.
 
 Static observation does not establish account availability or protocol stability. Session reads worked live; isolated creation returned HTTP 400 and needs diagnosis against legitimate account capabilities. Real upload/readback is pending. Avoid retry loops, interactive credential prompts, or changing request shapes without new evidence.
+
+The native version 1 contract is implemented and locally verified; see [broker contract](broker-contract.md). The updated noninteractive live discovery check returned `authentication_required` on 2026-10-09, so real-service history/continuation qualification remains outstanding.

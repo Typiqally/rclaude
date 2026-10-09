@@ -43,6 +43,40 @@ async fn bounded_json(response: reqwest::Response, maximum: usize) -> Result<Val
     }
     serde_json::from_slice(&bytes).map_err(|_| ErrorCode::IncompatibleVersion)
 }
+fn collection_path(base: &str, limit: usize, sort: Option<&str>, cursor: Option<&str>) -> String {
+    let mut query = url::form_urlencoded::Serializer::new(String::new());
+    query.append_pair("limit", &limit.to_string());
+    if let Some(sort) = sort {
+        query.append_pair("sort_order", sort);
+    }
+    if let Some(cursor) = cursor {
+        query.append_pair("cursor", cursor);
+    }
+    format!("{base}?{}", query.finish())
+}
+fn sequence(row: &Value) -> Result<u64, ErrorCode> {
+    row["sequence_num"]
+        .as_u64()
+        .or_else(|| row["sequence_num"].as_str().and_then(|s| s.parse().ok()))
+        .ok_or(ErrorCode::IncompatibleVersion)
+}
+fn reject_truncated(value: &Value) -> Result<(), ErrorCode> {
+    if value["truncated"] == true
+        || value["catch_up_truncated"] == true
+        || value["type"] == "catch_up_truncated"
+    {
+        Err(ErrorCode::HistoryIncomplete)
+    } else {
+        Ok(())
+    }
+}
+fn next_cursor(value: &Value) -> Result<Option<String>, ErrorCode> {
+    match value.get("next_cursor") {
+        Some(Value::String(s)) if bounded(s, 4096) => Ok(Some(s.clone())),
+        Some(Value::Null) | None if value["has_more"] != true => Ok(None),
+        _ => Err(ErrorCode::HistoryIncomplete),
+    }
+}
 #[derive(Clone)]
 pub struct Client {
     http: reqwest::Client,
@@ -50,6 +84,18 @@ pub struct Client {
     credentials: std::sync::Arc<tokio::sync::Mutex<Option<auth::OAuthToken>>>,
 }
 impl Client {
+    #[cfg(test)]
+    pub(crate) fn fixture(endpoint: String) -> Self {
+        let token = auth::OAuthToken::from_json(
+            br#"{"claudeAiOauth":{"accessToken":"fake-access","expiresAt":4102444800000}}"#,
+        )
+        .unwrap();
+        Self {
+            http: reqwest::Client::new(),
+            credentials: std::sync::Arc::new(tokio::sync::Mutex::new(Some(token))),
+            endpoint,
+        }
+    }
     pub fn new() -> Result<Self, ErrorCode> {
         Ok(Self {
             endpoint: "https://api.anthropic.com".into(),
@@ -123,16 +169,137 @@ impl Client {
         bounded_json(response, 8 * 1024 * 1024).await
     }
     pub async fn sessions(&self) -> Result<Value, ErrorCode> {
-        let result = self
-            .json(reqwest::Method::GET, "/v1/code/sessions?limit=100", None)
+        let mut rows = Vec::new();
+        let mut cursor = None;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut ids = std::collections::BTreeSet::new();
+        let mut bytes = 0usize;
+        loop {
+            let path = collection_path("/v1/code/sessions", 100, None, cursor.as_deref());
+            let result = self.json(reqwest::Method::GET, &path, None).await?;
+            reject_truncated(&result)?;
+            let data = result["data"]
+                .as_array()
+                .ok_or(ErrorCode::IncompatibleVersion)?;
+            for row in data {
+                let summary = crate::history::session_summary(row)?;
+                if ids.insert(
+                    summary["id"]
+                        .as_str()
+                        .ok_or(ErrorCode::IncompatibleVersion)?
+                        .to_owned(),
+                ) {
+                    bytes += summary.to_string().len();
+                    rows.push(summary);
+                    if rows.len() > 10_000 || bytes > 16 * 1024 * 1024 {
+                        return Err(ErrorCode::TooLarge);
+                    }
+                }
+            }
+            cursor = next_cursor(&result)?;
+            let Some(next) = &cursor else {
+                break;
+            };
+            if data.is_empty() || !seen.insert(next.clone()) {
+                return Err(ErrorCode::HistoryIncomplete);
+            }
+        }
+        Ok(Value::Array(rows))
+    }
+    pub async fn history_snapshot(
+        &self,
+        session: &str,
+    ) -> Result<crate::history::HistorySnapshot, ErrorCode> {
+        let session = session_reference(session)?;
+        let value = self.session(&session).await?;
+        let metadata = value
+            .get("response_shape")
+            .or_else(|| value.get("session"))
+            .unwrap_or(&value);
+        let active = crate::history::session_summary(metadata)?["status"] == "running";
+        let base = format!("/v1/code/sessions/{session}/events");
+        let latest = self
+            .json(
+                reqwest::Method::GET,
+                &collection_path(&base, 1, Some("desc"), None),
+                None,
+            )
             .await?;
-        let rows = result["data"]
+        reject_truncated(&latest)?;
+        let newest = latest["data"]
             .as_array()
             .ok_or(ErrorCode::IncompatibleVersion)?;
-        Ok(Value::Array(rows.iter().filter_map(|row| {
-            let id=session_reference(row["id"].as_str()?).ok()?;
-            Some(json!({"id":id,"title":row["title"].as_str().unwrap_or("Untitled").chars().take(256).collect::<String>(),"status":row["worker_status"].as_str().unwrap_or("unknown")}))
-        }).collect()))
+        if newest.len() > 1 {
+            return Err(ErrorCode::IncompatibleVersion);
+        }
+        let through = newest.first().map(sequence).transpose()?.unwrap_or(0);
+        if through == 0 && !newest.is_empty() {
+            return Err(ErrorCode::IncompatibleVersion);
+        }
+        let mut events = Vec::new();
+        let mut cursor = None;
+        let mut seen = std::collections::BTreeSet::new();
+        let mut ids = std::collections::BTreeSet::new();
+        let mut bytes = 0usize;
+        let mut last = 0;
+        let mut count = 0;
+        while last < through {
+            let page = self
+                .json(
+                    reqwest::Method::GET,
+                    &collection_path(&base, 100, Some("asc"), cursor.as_deref()),
+                    None,
+                )
+                .await?;
+            reject_truncated(&page)?;
+            let rows = page["data"]
+                .as_array()
+                .ok_or(ErrorCode::IncompatibleVersion)?;
+            for row in rows {
+                let seq = sequence(row)?;
+                if seq > through {
+                    break;
+                }
+                if seq <= last {
+                    return Err(ErrorCode::HistoryIncomplete);
+                }
+                last = seq;
+                count += 1;
+                if count > 100_000 {
+                    return Err(ErrorCode::TooLarge);
+                }
+                if let Some(event) = crate::history::canonical_event(row)? {
+                    if !ids.insert(
+                        event["id"]
+                            .as_str()
+                            .ok_or(ErrorCode::IncompatibleVersion)?
+                            .to_owned(),
+                    ) {
+                        return Err(ErrorCode::HistoryIncomplete);
+                    }
+                    bytes += event.to_string().len();
+                    if bytes > 16 * 1024 * 1024 {
+                        return Err(ErrorCode::TooLarge);
+                    }
+                    events.push(event);
+                }
+            }
+            if last == through {
+                break;
+            }
+            cursor = next_cursor(&page)?;
+            let Some(next) = &cursor else {
+                return Err(ErrorCode::HistoryIncomplete);
+            };
+            if rows.is_empty() || !seen.insert(next.clone()) {
+                return Err(ErrorCode::HistoryIncomplete);
+            }
+        }
+        Ok(crate::history::HistorySnapshot {
+            events,
+            active,
+            through_sequence: through,
+        })
     }
     pub async fn session(&self, session: &str) -> Result<Value, ErrorCode> {
         let session = session_reference(session)?;
@@ -368,5 +535,101 @@ mod tests {
         assert_eq!(result["byteLength"], 5);
         assert!(!result.to_string().contains("fake-access"));
         server.await.unwrap();
+    }
+    #[tokio::test]
+    async fn native_discovery_and_history_follow_all_pages_and_pin_the_high_water_mark() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let metadata = |id: &str, kind: &str| json!({"id":id,"environment_kind":kind,"title":kind,"created_at":"2026-10-09T10:00:00Z","worker_status":"idle"});
+            let event = |id: &str, sequence: u64, kind: &str| json!({"id":id,"sequence_num":sequence,"created_at":"2026-10-09T10:00:00Z","source":"desktop","payload":{"type":kind,"uuid":id,"message":{"role":kind,"content":id}}});
+            for index in 0..5 {
+                let (mut socket, _) = listener.accept().await.unwrap();
+                let mut bytes = Vec::new();
+                let mut block = [0u8; 4096];
+                loop {
+                    let n = socket.read(&mut block).await.unwrap();
+                    assert!(n > 0);
+                    bytes.extend_from_slice(&block[..n]);
+                    if bytes.windows(4).any(|s| s == b"\r\n\r\n") {
+                        break;
+                    }
+                }
+                let headers = String::from_utf8_lossy(&bytes);
+                let response = match index {
+                    0 => { assert!(headers.starts_with("GET /v1/code/sessions?limit=100 ")); json!({"data":[metadata("cse_web","web")],"next_cursor":"private-upstream"}) },
+                    1 => { assert!(headers.contains("cursor=private-upstream")); json!({"data":[metadata("cse_desktop","desktop")],"next_cursor":null}) },
+                    2 => { assert!(headers.starts_with("GET /v1/code/sessions/cse_web ")); metadata("cse_web","web") },
+                    3 => { assert!(headers.contains("limit=1&sort_order=desc")); json!({"data":[event("answer",7,"assistant")],"next_cursor":null}) },
+                    _ => { assert!(headers.contains("limit=100&sort_order=asc")); json!({"data":[event("question",3,"user"),event("answer",7,"assistant"),event("later",9,"user")],"next_cursor":null}) },
+                }.to_string();
+                socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",response.len()).as_bytes()).await.unwrap();
+            }
+        });
+        let client = fixture_client(address);
+        let sessions = client.sessions().await.unwrap();
+        assert_eq!(sessions.as_array().unwrap().len(), 2);
+        assert!(!sessions.to_string().contains("fake-access"));
+        let history = client.history_snapshot("cse_web").await.unwrap();
+        assert_eq!(history.through_sequence, 7);
+        assert!(!history.active);
+        assert_eq!(history.events.len(), 2);
+        assert_eq!(history.events[1]["id"], "answer");
+        server.await.unwrap();
+    }
+    fn fixture_client(address: std::net::SocketAddr) -> Client {
+        let token = auth::OAuthToken::from_json(
+            br#"{"claudeAiOauth":{"accessToken":"fake-access","expiresAt":4102444800000}}"#,
+        )
+        .unwrap();
+        Client {
+            http: reqwest::Client::new(),
+            credentials: std::sync::Arc::new(tokio::sync::Mutex::new(Some(token))),
+            endpoint: format!("http://{address}"),
+        }
+    }
+    #[tokio::test]
+    async fn missing_high_water_and_repeated_upstream_cursor_never_return_partial_history() {
+        let metadata = json!({"id":"cse_original","title":"Original","created_at":"2026-10-09T10:00:00Z","worker_status":"idle"});
+        let row = |sequence: u64| json!({"id":format!("event{sequence}"),"sequence_num":sequence,"created_at":"2026-10-09T10:00:00Z","payload":{"type":"user","uuid":format!("event{sequence}"),"message":{"role":"user","content":"question"}}});
+        for pages in [
+            vec![json!({"data":[row(3)],"next_cursor":null})],
+            vec![
+                json!({"data":[row(3)],"next_cursor":"repeat"}),
+                json!({"data":[row(5)],"next_cursor":"repeat"}),
+            ],
+            vec![json!({"data":[],"truncated":true})],
+        ] {
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let address = listener.local_addr().unwrap();
+            let responses = std::iter::once(metadata.clone())
+                .chain(std::iter::once(json!({"data":[row(7)],"next_cursor":null})))
+                .chain(pages)
+                .collect::<Vec<_>>();
+            let server = tokio::spawn(async move {
+                for response in responses {
+                    let (mut socket, _) = listener.accept().await.unwrap();
+                    let mut bytes = Vec::new();
+                    let mut block = [0; 4096];
+                    loop {
+                        let n = socket.read(&mut block).await.unwrap();
+                        assert!(n > 0);
+                        bytes.extend_from_slice(&block[..n]);
+                        if bytes.windows(4).any(|b| b == b"\r\n\r\n") {
+                            break;
+                        }
+                    }
+                    let response = response.to_string();
+                    socket.write_all(format!("HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",response.len()).as_bytes()).await.unwrap();
+                }
+            });
+            assert!(matches!(
+                Client::fixture(format!("http://{address}"))
+                    .history_snapshot("cse_original")
+                    .await,
+                Err(ErrorCode::HistoryIncomplete)
+            ));
+            server.await.unwrap();
+        }
     }
 }

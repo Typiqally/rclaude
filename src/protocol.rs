@@ -36,6 +36,8 @@ pub enum ErrorCode {
     RateLimited,
     #[error("file is unavailable")]
     FileUnavailable,
+    #[error("history catch-up is incomplete")]
+    HistoryIncomplete,
     #[error("operation is unsupported")]
     Unsupported,
 }
@@ -58,6 +60,20 @@ pub enum BrokerRequest {
     ListSessions {
         version: u32,
         id: u64,
+        #[serde(default)]
+        cursor: Option<String>,
+        #[serde(default = "default_limit")]
+        limit: usize,
+    },
+    ReadHistory {
+        version: u32,
+        id: u64,
+        #[serde(rename = "sessionId")]
+        session_id: String,
+        #[serde(default)]
+        cursor: Option<String>,
+        #[serde(default = "default_limit")]
+        limit: usize,
     },
     OpenSession {
         version: u32,
@@ -151,6 +167,7 @@ impl BrokerRequest {
             Self::Handshake { id, .. }
             | Self::AuthStatus { id, .. }
             | Self::ListSessions { id, .. }
+            | Self::ReadHistory { id, .. }
             | Self::OpenSession { id, .. }
             | Self::CreateSession { id, .. }
             | Self::UploadBegin { id, .. }
@@ -168,6 +185,7 @@ impl BrokerRequest {
             Self::Handshake { version, .. }
             | Self::AuthStatus { version, .. }
             | Self::ListSessions { version, .. }
+            | Self::ReadHistory { version, .. }
             | Self::OpenSession { version, .. }
             | Self::CreateSession { version, .. }
             | Self::UploadBegin { version, .. }
@@ -191,7 +209,16 @@ pub fn decode_request(bytes: &[u8]) -> Result<BrokerRequest, ErrorCode> {
     if request.version() != VERSION {
         return Err(ErrorCode::IncompatibleVersion);
     }
+    if let BrokerRequest::ListSessions { cursor, limit, .. }
+    | BrokerRequest::ReadHistory { cursor, limit, .. } = &request
+        && (!(1..=100).contains(limit) || cursor.as_ref().is_some_and(|s| !bounded(s, 128)))
+    {
+        return Err(ErrorCode::InvalidRequest);
+    }
     Ok(request)
+}
+fn default_limit() -> usize {
+    100
 }
 
 pub fn bounded(value: &str, max: usize) -> bool {
