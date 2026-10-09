@@ -25,16 +25,21 @@ pub fn session_summary(row: &Value) -> Result<Value, ErrorCode> {
             .or_else(|| row.get("last_event_at").filter(|v| !v.is_null()))
             .unwrap_or(&row["created_at"]),
     )?;
-    let status = match row["worker_status"]
-        .as_str()
-        .or(row["session_status"].as_str())
-        .unwrap_or("idle")
-    {
-        "running" | "requires_action" => "running",
-        "idle" | "completed" => "idle",
-        "failed" | "error" => "failed",
-        "stopped" | "cancelled" | "canceled" => "stopped",
-        _ => return Err(ErrorCode::IncompatibleVersion),
+    let archived = row["status"] == "archived" || row["archived"] == true;
+    let status = if archived {
+        "stopped"
+    } else {
+        match row["worker_status"]
+            .as_str()
+            .or(row["session_status"].as_str())
+            .unwrap_or("idle")
+        {
+            "running" | "requires_action" => "running",
+            "idle" | "completed" => "idle",
+            "failed" | "error" => "failed",
+            "stopped" | "cancelled" | "canceled" => "stopped",
+            _ => return Err(ErrorCode::IncompatibleVersion),
+        }
     };
     let sources = row["config"]["sources"]
         .as_array()
@@ -55,7 +60,7 @@ pub fn session_summary(row: &Value) -> Result<Value, ErrorCode> {
         });
     Ok(
         json!({"id":id,"title":row["title"].as_str().unwrap_or("Untitled").chars().filter(|c| !c.is_control()).take(256).collect::<String>(),
-        "repositoryUrl":repository,"createdAtMs":created,"updatedAtMs":updated,"archived":row["status"]=="archived" || row["archived"]==true,"status":status}),
+        "repositoryUrl":repository,"createdAtMs":created,"updatedAtMs":updated,"archived":archived,"status":status}),
     )
 }
 
