@@ -53,7 +53,7 @@ Install Rust and the official Claude CLI, then sign in through that CLI. From
 this repository:
 
 ```sh
-cargo install --locked --path .
+cargo install --locked --path . --bin rclaude
 rclaude --help
 rclaude auth-status
 ```
@@ -61,7 +61,7 @@ rclaude auth-status
 Once the repository is public, you can also install directly from source:
 
 ```sh
-cargo install --locked --git https://github.com/Typiqally/rclaude rclaude
+cargo install --locked --git https://github.com/Typiqally/rclaude --bin rclaude rclaude
 ```
 
 Source installation is the initial distribution method. The
@@ -78,15 +78,21 @@ python3 scripts/install_local_macos.py
 
 macOS may ask for the signing key and the official Claude credential. Choose
 **Always Allow** to remember access. Enter passwords only in the macOS dialog.
-The installer retains a nonexportable signing key in the login Keychain and pins
-the executable designated requirement to its certificate. This local certificate
-is for development, not notarization. **It does not preserve credential grants
-across changed builds:** macOS also assigns self-signed code a hash-based Keychain
-partition. A changed binary can require another explicit authorization even with
-the same certificate and designated requirement. Normal broker calls never open
-that dialog. Apple development or Developer ID signing with a stable team identity
-is needed to avoid this hash-based partition; this installer does not supply it.
-See [Apple's partition identity implementation](https://github.com/apple-oss-distributions/Security/blob/main/securityd/src/clientid.cpp).
+The installer retains a nonexportable signing key in the login Keychain. It
+installs a certificate-signed launcher at `/opt/homebrew/bin/rclaude` and a
+separately signed engine at `/opt/homebrew/bin/.rclaude/engine.dylib`. Engine
+updates preserve the launcher bytes and its remembered credential grant. The
+launcher verifies a private copy against its pinned certificate and engine
+identifier before loading it into the same process. Credentials never cross a
+launcher/engine IPC channel. See [ADR-0001](docs/adr/0001-signed-engine-launcher.md).
+
+This local certificate is for development, not notarization. macOS assigns
+self-signed executables a [hash-based Keychain partition](https://github.com/apple-oss-distributions/Security/blob/main/securityd/src/clientid.cpp).
+Changing the launcher or its certificate requires explicit authorization again;
+ordinary engine updates do not. Normal broker calls never open a credential
+dialog. Installing a monolithic binary with `cargo install` replaces the stable
+launcher and does not preserve its grant. Use the Python installer for local
+macOS updates; Python is build tooling only and is not required by the broker.
 
 ## Use
 
@@ -171,7 +177,7 @@ are trademarks of their respective owners. Their use describes compatibility
 and does not imply endorsement. No official application source or assets are
 redistributed.
 
-Native Claude cloud conversations use the [version 1 broker contract](docs/broker-contract.md), including bounded discovery, immutable paged history, original-session continuation, and interruption. Local contract tests pass. After explicit authorization, the installed build can access the official login noninteractively, but live discovery returns `incompatible_version`. Full real-service qualification remains outstanding. This support is experimental.
+Native Claude cloud conversations use the [version 1 broker contract](docs/broker-contract.md), including bounded discovery, immutable paged history, original-session continuation, and interruption. Local contract tests pass. Live discovery now returns 108 sessions, and authorization survives engine updates. Live history paging works for representable events; individual events exceeding the 64 KiB frame limit fail explicitly with `too_large`. Complete all-client history, catch-up truncation, continuation, interruption, and uploads still require qualification. This support is experimental.
 
 If `auth-status` reports `credential_access_denied`, the official credential record
 is present but macOS has denied this broker access. Install with the local signing

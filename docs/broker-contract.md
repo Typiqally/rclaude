@@ -46,47 +46,34 @@ operation is for explicitly new Bluedex conversations.
 
 ## Qualification
 
-On 2026-10-09 local HTTP fixtures passed all-client discovery and history,
-provider paging, snapshot paging, catch-up failure cases, continuation after the
-snapshot, UUID echo, replay filtering, original-session interruption, frame
-budgets, credential isolation, and noninteractive Keychain behavior. Bluedex's
-adapter fixtures separately verify current-turn correlation and original-session
-attachment upload.
+On 2026-10-09, 36 Rust and six installer tests passed, including all-client
+fixtures, immutable snapshot paging, catch-up failures, UUID echo and replay
+filtering, original-session interruption, credential isolation, and signature
+verification before engine loading. Formatting, Clippy, and dependency audit
+passed. Bluedex adapter fixtures separately cover current-turn correlation.
 
-The updated broker's live discovery attempt returned `authentication_required`
-with Keychain interaction disabled. No prompts were retried and no real
-conversations were modified. Real Claude discovery, complete history from every
-native client, paging/catch-up, continuation, interruption, and credential
-isolation remain release prerequisites. The broker stays experimental.
+The installed local macOS launcher was explicitly authorized once. Subsequent
+signed engine updates retained the launcher bytes, and fresh UI-disabled
+processes still accessed the official login without another credential grant.
+Corrupted engines and correctly signed engines with the wrong identifier were
+refused before broker startup. This applies to engine updates; replacing the
+launcher or its pinned certificate requires explicit reauthorization.
 
-Follow-up noninteractive diagnosis on 2026-10-09 confirmed that the matching
-official Keychain credential record exists, but macOS refuses broker access
-(`errSecAuthFailed`). No credential contents were returned or logged. The broker
-now distinguishes this as `credential_access_denied` rather than a missing login.
-The process UI guard and per-query skip policy remain enabled; an existing private
-official credential file remains a valid fallback. No ACL changes, exports, login
-attempts, or interactive prompts were performed. Real-service qualification remains
-blocked until official credentials are accessible noninteractively.
+Live discovery returned 108 sessions over two bounded broker pages. Archived
+records with obsolete worker states now normalize as stopped. Read-only history
+qualification confirmed stable snapshot sequences, canonical event IDs, and
+bounded multi-page responses for representable histories. Some histories contain
+individual canonical events larger than the 64 KiB frame budget; they return
+`too_large` explicitly rather than shortening or silently dropping content.
 
-The explicit `rclaude authorize` CLI now permits a single native macOS access
-request after validating that the executable has a certificate signature and
-the expected identifier. This operation is absent from the broker protocol.
-The local macOS installer reuses one nonexportable signing key and pins its
-designated requirement to the public certificate. This does not preserve access
-across changed self-signed binaries: the additional Keychain partition condition
-uses the executable code hash. Offline tests cover unsigned-build refusal, protocol
-rejection, identity reuse, private temporary key cleanup, and restricted signing
-key import. Actual OS grants and live cloud qualification remain manual checks;
-passing those offline tests does not establish credential access.
+Read-only subscriptions accepted continuation after a history snapshot and replay
+from zero; 307 replayed durable events had strictly increasing sequences. Live
+truncated catch-up remains unqualified.
 
-Live follow-up on 2026-10-09: installation and explicit native authorization
-succeeded. A separate UI-disabled process confirmed the official login was
-available. Handshake passed, but cloud discovery returned `incompatible_version`;
-no live history or conversation mutations were performed. A diagnostic rebuild
-with the same certificate and designated requirement lost credential access.
-Restoring the original authorized build restored noninteractive access. Read-only
-ACL metadata confirmed existing rclaude entries. [Apple's partition identity implementation](https://github.com/apple-oss-distributions/Security/blob/main/securityd/src/clientid.cpp)
-explains why self-signed builds cannot promise authorization across updates. The
-authorized build is installed; further live qualification remains blocked by the
-API incompatibility. No additional authorization attempts or ACL rewrites were
-performed to resolve the rebuild denial.
+No existing conversation was modified by these checks. Only aggregate counts,
+static schema labels, and fixed error codes were printed; credentials, record
+identifiers, titles, and transcripts were not logged or committed. Complete
+history from every native client, live catch-up truncation, original-session continuation,
+interruption, and attachment staging/readback remain release prerequisites.
+The broker stays experimental; passing local fixtures does not qualify these
+remaining live operations.

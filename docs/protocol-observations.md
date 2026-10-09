@@ -22,20 +22,26 @@ Worker SDK events and ephemeral stream events become broker events. Client resul
 
 Static observation does not establish account availability or protocol stability. Session reads worked live; isolated creation returned HTTP 400 and needs diagnosis against legitimate account capabilities. Real upload/readback is pending. Avoid retry loops, interactive credential prompts, or changing request shapes without new evidence.
 
-The native version 1 contract is implemented and locally verified; see [broker contract](broker-contract.md). The updated noninteractive live discovery check returned `authentication_required` on 2026-10-09, so real-service history/continuation qualification remains outstanding.
+The native version 1 contract is implemented and locally verified; see
+[broker contract](broker-contract.md). Initial live checks failed noninteractive
+credential access, then discovery schema validation. A self-signed monolithic
+rebuild invalidated its macOS hash-based Keychain grant even with the same
+certificate requirement. Restoring the authorized executable restored access.
 
-Follow-up diagnosis: official Keychain metadata matched the expected service and
-account, but a UI-disabled read returned `errSecAuthFailed` (-25293). This is an
-OS access denial rather than an absent login. The updated broker reports
-`credential_access_denied`, preserves its noninteractive guards, and does not
-retry prompts. Real-service qualification is still blocked.
+The local installer now preserves an explicitly authorized launcher and updates
+a separately signed engine in the same process (ADR-0001). Fresh UI-disabled
+processes retained credential access across engine updates. Corrupted copies and
+engines signed with the wrong identifier failed before loading. Launcher or
+certificate changes still require explicit authorization.
 
-After explicit CLI authorization on 2026-10-09, the installed signed build could
-read the official login from a fresh process with Keychain UI disabled. Live
-discovery then returned `incompatible_version`. A changed executable lost access
-despite retaining the same self-signed certificate and designated requirement;
-restoring the authorized executable restored access. macOS independently assigns
-self-signed code a hash-based Keychain partition. This rules out a promise of
-retained authorization across local rebuilds. Cloud history, continuation,
-interruption, and all-client qualification remain outstanding. No real session
-was changed and no credentials or transcript contents were logged.
+Live discovery now returns 108 sessions over two bounded broker pages. The
+schema mismatch was an archived record with an obsolete worker state; archived
+sessions now normalize as stopped. Read-only history paging passes for
+representable events, while individual canonical events exceeding the 64 KiB
+frame budget return `too_large` without truncation. Complete all-client history,
+live catch-up truncation, continuation, interruption, and uploads remain release
+checks. Read-only subscriptions accepted snapshot continuation and replay from
+zero; 307 replayed durable events had strictly increasing sequences.
+Only aggregate counts and fixed diagnostic labels were printed; no credentials,
+private identifiers, titles, or transcripts were logged or committed. Existing
+conversations were not changed.

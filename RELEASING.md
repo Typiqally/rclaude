@@ -31,10 +31,14 @@ are the distribution channels while upstream behavior remains experimental.
 The local `scripts/install_local_macos.py` installer uses a reusable self-signed
 certificate with an explicitly pinned designated requirement for development.
 It does not change system trust or provide Developer ID signing or notarization.
-The certificate alone cannot preserve credential access across changed builds:
-macOS assigns this self-signed executable a hash-based Keychain partition.
-Qualify the exact authorized binary and use a trusted Apple team signing identity
-for releases requiring remembered access across updates.
+The installer preserves an authorized launcher and updates a separately signed
+engine in the same process. Qualify both installed artifacts, including signature
+rejection and a fresh-process credential check after an engine update. Changes
+to the launcher or its certificate require explicit reauthorization because
+macOS assigns self-signed executables a hash-based Keychain partition.
+The binary release workflow still builds monolithic executables; it does not
+distribute this local launcher/engine layout. A trusted Apple team identity is
+required for monolithic releases that promise remembered access across updates.
 Keep its private signing key local; never include it in source or release assets.
 Offline installer tests must not create identities or request credential access.
 

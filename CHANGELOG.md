@@ -13,11 +13,14 @@ the package version in `Cargo.toml`.
 - Implement native cloud discovery and immutable paged canonical history across clients.
 - Continue, subscribe, and interrupt the original session with UUID correlation and monotonic durable sequences.
 - Reject incomplete catch-up and oversized events explicitly; whitelist metadata and streamed envelopes.
-- Local contract fixtures pass. Explicit authorization enables noninteractive
-  access for the installed build, but live discovery returns `incompatible_version`.
-  Full real-service qualification is required before a qualified release.
-- Correct the local signing limitation: a reusable self-signed certificate does
-  not prevent hash-based Keychain authorization from changing across rebuilds.
+- Preserve the authorized macOS launcher while updating a separately signed,
+  certificate-pinned engine inside the same broker process (ADR-0001).
+- Reject unsafe or incorrectly signed engine copies before loading them.
+- Add CLI-only native schema diagnostics that return static labels and counts.
+- Normalize archived sessions as stopped before interpreting obsolete worker
+  states. Live discovery now finds 108 sessions across two broker pages.
+- Live history paging works for representable events; oversized single events
+  return `too_large`. Full real-service qualification remains outstanding.
 
 ## [Unreleased]
 

@@ -2,6 +2,7 @@
 name = "rclaude"
 version = "0.1.0"
 edition = "2024"
+default-run = "rclaude"
 rust-version = "1.95"
 license = "MIT"
 description = "Remote-control client for the Claude Code terminal UI and bounded attachment broker"
