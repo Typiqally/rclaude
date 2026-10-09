@@ -5,6 +5,7 @@ The signing key remains in the login Keychain. This is local development signing
 not Developer ID signing or notarization. Authorization is a separate explicit CLI.
 """
 import argparse
+import json
 import os
 from pathlib import Path
 import re
@@ -31,10 +32,67 @@ def find_identity(output):
     return None
 
 
-def requirement(fingerprint):
+def requirement(fingerprint, identifier=IDENTIFIER):
     if not re.fullmatch(r"[0-9A-Fa-f]{40}", fingerprint):
         raise ValueError("Invalid public signing certificate fingerprint")
-    return f'=designated => identifier "{IDENTIFIER}" and certificate leaf = H"{fingerprint.upper()}"'
+    if identifier not in (IDENTIFIER, IDENTIFIER + ".engine"):
+        raise ValueError("Invalid broker signing identifier")
+    return f'=designated => identifier "{identifier}" and certificate leaf = H"{fingerprint.upper()}"'
+
+
+def launcher_reusable(destination, fingerprint, execute=run):
+    if not destination.is_file() or destination.is_symlink():
+        return False
+    try:
+        execute(["/usr/bin/codesign", "--verify", "--strict", "--test-requirement",
+                 requirement(fingerprint).replace("=designated => ", "="), str(destination)])
+        output = execute([str(destination), "--launcher-info"])
+        if len(output) > 1024:
+            return False
+        return json.loads(output) == {"launcherVersion": 1, "engineAbiVersion": 1,
+                                      "certificateSha1": fingerprint.upper()}
+    except (ValueError, OSError, RuntimeError, subprocess.SubprocessError):
+        return False
+
+
+def install_pair(launcher_source, engine_source, destination, fingerprint, execute=run):
+    if launcher_source is None and not launcher_reusable(destination, fingerprint, execute):
+        raise RuntimeError("The installed launcher is unavailable or incompatible")
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    engine_directory = destination.parent / ".rclaude"
+    if engine_directory.is_symlink():
+        raise RuntimeError("The engine directory must not be a symlink")
+    engine_directory.mkdir(mode=0o700, exist_ok=True)
+    engine_directory.chmod(0o700)
+    staged = []
+    def sign(source, directory, prefix, identifier, mode):
+        descriptor, name = tempfile.mkstemp(prefix=prefix, dir=directory)
+        os.close(descriptor)
+        path = Path(name); staged.append(path)
+        shutil.copyfile(source, path); path.chmod(mode)
+        execute(["/usr/bin/codesign", "--force", "--sign", fingerprint, "--timestamp=none",
+                 "--identifier", identifier, "--requirements", requirement(fingerprint, identifier),
+                 str(path)], timeout=600)
+        execute(["/usr/bin/codesign", "--verify", "--strict", "--test-requirement",
+                 requirement(fingerprint, identifier).replace("=designated => ", "="), str(path)])
+        return path
+    try:
+        engine = sign(engine_source, engine_directory, ".rclaude-engine-", IDENTIFIER + ".engine", 0o600)
+        launcher = None
+        if launcher_source is not None:
+            launcher = sign(launcher_source, destination.parent, ".rclaude-launcher-", IDENTIFIER, 0o755)
+            if not launcher_reusable(launcher, fingerprint, execute):
+                raise RuntimeError("The staged launcher has the wrong identity or ABI")
+        # Verify the complete candidate before replacing either installed file.
+        if launcher is not None and destination.is_file():
+            shutil.copyfile(destination, engine_directory / "previous-rclaude")
+            (engine_directory / "previous-rclaude").chmod(0o700)
+        os.replace(engine, engine_directory / "engine.dylib")
+        if launcher is not None:
+            os.replace(launcher, destination)
+    finally:
+        for path in staged:
+            path.unlink(missing_ok=True)
 
 
 def ensure_identity(execute=run):
@@ -84,33 +142,27 @@ def main():
     args = parser.parse_args()
     if sys.platform != "darwin":
         raise RuntimeError("This installer requires macOS")
-    if not args.skip_build:
-        run(["cargo", "build", "--release", "--locked"], cwd=ROOT, timeout=600)
-    source = ROOT / "target/release/rclaude"
-    if not source.is_file():
-        raise RuntimeError("The release binary is unavailable")
     fingerprint = ensure_identity()
     destination = args.destination.absolute()
-    destination.parent.mkdir(parents=True, exist_ok=True)
-    # Install atomically and preserve the current binary until signing verifies.
-    descriptor, temporary = tempfile.mkstemp(prefix=".rclaude-install-", dir=destination.parent)
-    os.close(descriptor)
-    staged = Path(temporary)
-    try:
-        shutil.copyfile(source, staged)
-        staged.chmod(0o755)
-        print("macOS may request use of the local signing key. Approve in the system dialog.", flush=True)
-        run(["/usr/bin/codesign", "--force", "--sign", fingerprint, "--timestamp=none",
-             "--identifier", IDENTIFIER, "--requirements", requirement(fingerprint), str(staged)], timeout=600)
-        run(["/usr/bin/codesign", "--verify", "--strict", str(staged)])
-        os.replace(staged, destination)
-        run(["/usr/bin/codesign", "--verify", "--strict", str(destination)])
-    finally:
-        staged.unlink(missing_ok=True)
-    print(f"Installed local certificate-signed broker: {destination}")
+    reuse = launcher_reusable(destination, fingerprint)
+    if not args.skip_build:
+        environment = os.environ.copy()
+        environment["RCLAUDE_SIGNING_CERTIFICATE_SHA1"] = fingerprint
+        command = ["cargo", "build", "--release", "--locked", "--lib"]
+        if not reuse:
+            command += ["--bin", "rclaude-launcher"]
+        run(command, cwd=ROOT, env=environment, timeout=600)
+    engine = ROOT / "target/release/librclaude.dylib"
+    launcher = None if reuse else ROOT / "target/release/rclaude-launcher"
+    if not engine.is_file() or (launcher is not None and not launcher.is_file()):
+        raise RuntimeError("The release engine or launcher is unavailable")
+    install_pair(launcher, engine, destination, fingerprint)
+    print(f"Installed signed in-process broker engine: {destination}")
     print("Normal broker requests never authorize interactively.")
-    print("Changed self-signed builds can require a new explicit Keychain grant.")
-    print(f"Explicit authorization command: {destination} authorize")
+    if reuse:
+        print("The authorized launcher bytes were preserved.")
+    else:
+        print(f"Authorize this launcher explicitly once: {destination} authorize")
 
 
 if __name__ == "__main__":
