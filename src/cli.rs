@@ -17,6 +17,8 @@ enum Command {
     Broker,
     Sessions,
     AuthStatus,
+    /// Report native API schema counts without record values or credentials.
+    NativeSchema,
     /// Grant Keychain access explicitly once, outside the broker protocol.
     Authorize,
     Connect {
@@ -63,6 +65,10 @@ async fn execute() -> Result<(), ErrorCode> {
         }
         Command::Sessions => {
             println!("{}", client.sessions().await?);
+            Ok(())
+        }
+        Command::NativeSchema => {
+            println!("{}", client.native_schema().await?);
             Ok(())
         }
         Command::Upload { session, file } => {

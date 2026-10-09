@@ -11,6 +11,7 @@ pub mod stream;
 pub mod history;
 
 pub mod cli;
+pub mod diagnostics;
 pub mod launcher;
 
 pub fn engine_main() -> i32 {

@@ -206,6 +206,53 @@ impl Client {
         }
         Ok(Value::Array(rows))
     }
+    /// Deliberate CLI-only diagnosis; raw native data stays inside this process.
+    pub async fn native_schema(&self) -> Result<Value, ErrorCode> {
+        let response = self
+            .checked(
+                self.request(reqwest::Method::GET, "/v1/code/sessions?limit=100")
+                    .await?
+                    .timeout(Duration::from_secs(30))
+                    .send()
+                    .await
+                    .map_err(|_| ErrorCode::Unavailable)?,
+            )
+            .await?;
+        let status = response.status().as_u16();
+        let content_type = response
+            .headers()
+            .get("content-type")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or("");
+        let content = if content_type.starts_with("application/json") {
+            "json"
+        } else if content_type.starts_with("text/html") {
+            "html"
+        } else if content_type.starts_with("text/plain") {
+            "text"
+        } else {
+            "other"
+        };
+        let encoding = match response
+            .headers()
+            .get("content-encoding")
+            .and_then(|value| value.to_str().ok())
+        {
+            None | Some("identity") => "identity",
+            Some("gzip") => "gzip",
+            Some("br") => "br",
+            Some("zstd") => "zstd",
+            Some("deflate") => "deflate",
+            _ => "other",
+        };
+        let transport = json!({"status":status,"content":content,"encoding":encoding});
+        Ok(match bounded_json(response, 8 * 1024 * 1024).await {
+            Ok(value) => {
+                json!({"transport":transport,"schema":crate::diagnostics::collection_schema(&value)})
+            }
+            Err(code) => json!({"transport":transport,"bodyError":code}),
+        })
+    }
     pub async fn history_snapshot(
         &self,
         session: &str,
