@@ -9,6 +9,7 @@ test for bug fixes. Use Rust 1.95 or newer; macOS is the currently tested platfo
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets
+python3 -m unittest discover -s tests -p 'test_*.py'
 cargo audit
 cargo package --locked --allow-dirty
 ```
@@ -24,8 +25,10 @@ refresh, or the qualification example in public CI.
   repository information out of commits and logs. Use obvious example fixtures.
 - Keep provider tokens out of IPC, command-line arguments, and diagnostics.
 - Preserve bounds on frames, streams, files, concurrency, and upload lifetimes.
-- Preserve unrelated fields in official credential files; do not enable
-  interactive Keychain prompts or bypass device enrollment.
+- Preserve unrelated fields in official credential files. Broker operations and
+  `auth-status` must never enable interactive Keychain prompts. Only the explicit
+  certificate-signed `rclaude authorize` CLI may request access through macOS;
+  it is unavailable through broker frames. Do not bypass device enrollment.
 - Record protocol assumptions in `docs/protocol-observations.md` and distinguish
   offline test coverage from live qualification.
 - Update `CHANGELOG.md` for user-visible changes.

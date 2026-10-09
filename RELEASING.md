@@ -28,6 +28,12 @@ are the distribution channels while upstream behavior remains experimental.
 
 ## Signed binary releases
 
+The local `scripts/install_local_macos.py` installer uses a reusable self-signed
+certificate with an explicitly pinned designated requirement for development.
+It does not change system trust or provide Developer ID signing or notarization.
+Keep its private signing key local; never include it in source or release assets.
+Offline installer tests must not create identities or request credential access.
+
 The `Signed macOS release` workflow mirrors rcodex's manually dispatched release
 model. It validates the tag/version, repeats offline checks and dependency audit,
 verifies the source package, builds Apple Silicon and Intel binaries, creates

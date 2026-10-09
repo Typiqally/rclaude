@@ -24,6 +24,7 @@ fn a_renderer_or_broker_frame_cannot_enable_interactive_authorization() {
     assert!(decode_request(br#"{"version":1,"id":1,"type":"authorize"}"#).is_err());
 }
 #[test]
+#[cfg(target_os = "macos")]
 fn explicit_authorization_refuses_an_unsigned_test_build_before_accessing_keychain() {
     let output = std::process::Command::new(env!("CARGO_BIN_EXE_rclaude"))
         .arg("authorize")

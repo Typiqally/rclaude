@@ -5,6 +5,9 @@ the package version in `Cargo.toml`.
 
 ## Unreleased
 
+- Add an explicit certificate-signed authorization CLI and a local macOS installer
+  that retains a stable signing identity across updates. Broker calls remain
+  noninteractive; no authorization operation is available in broker frames.
 - Distinguish denied noninteractive official Keychain access from a missing login, without enabling prompts or exposing credentials.
 
 - Implement native cloud discovery and immutable paged canonical history across clients.

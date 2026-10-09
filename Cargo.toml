@@ -12,7 +12,7 @@ documentation = "https://github.com/Typiqally/rclaude#readme"
 keywords = ["claude", "anthropic", "remote-control", "terminal", "cli"]
 categories = ["command-line-utilities", "development-tools"]
 publish = false
-include = ["/src/**", "/tests/**", "/examples/**", "/docs/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/CHANGELOG.md", "/CONTRIBUTING.md", "/SECURITY.md", "/RELEASING.md"]
+include = ["/src/**", "/tests/**", "/scripts/**", "/examples/**", "/docs/**", "/Cargo.toml", "/Cargo.lock", "/README.md", "/LICENSE", "/CHANGELOG.md", "/CONTRIBUTING.md", "/SECURITY.md", "/RELEASING.md"]
 
 [dependencies]
 chrono = { version = "0.4", default-features = false, features = ["std"] }

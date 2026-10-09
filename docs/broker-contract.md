@@ -67,3 +67,13 @@ The process UI guard and per-query skip policy remain enabled; an existing priva
 official credential file remains a valid fallback. No ACL changes, exports, login
 attempts, or interactive prompts were performed. Real-service qualification remains
 blocked until official credentials are accessible noninteractively.
+
+The explicit `rclaude authorize` CLI now permits a single native macOS access
+request after validating that the executable has a certificate signature and
+the expected identifier. This operation is absent from the broker protocol.
+The local macOS installer reuses one nonexportable signing key and pins its
+designated requirement to the public certificate, so rebuilt executables can
+retain a remembered grant. Offline tests cover unsigned-build refusal, protocol
+rejection, identity reuse, private temporary key cleanup, and restricted signing
+key import. Actual OS grants and live cloud qualification remain manual checks;
+passing those offline tests does not establish credential access.

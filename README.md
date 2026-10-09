@@ -68,6 +68,21 @@ Source installation is the initial distribution method. The
 [release workflow](RELEASING.md) can publish attested Apple Silicon and Intel
 macOS binaries after personal and live qualification. There is no built-in updater.
 
+For durable local macOS Keychain authorization, build and install with a reusable
+local signing certificate, then request access explicitly:
+
+```sh
+python3 scripts/install_local_macos.py
+/opt/homebrew/bin/rclaude authorize
+```
+
+macOS may ask for the signing key and the official Claude credential. Choose
+**Always Allow** to remember access. Enter passwords only in the macOS dialog.
+The installer retains a nonexportable signing key in the login Keychain and pins
+the executable identity to its certificate. Reuse this installer for updates:
+ordinary unsigned `cargo install` builds have a different identity and cannot
+reuse that grant. This local certificate is for development, not notarization.
+
 ## Use
 
 ```sh
@@ -92,6 +107,8 @@ interactive remote approvals stay in the official Claude UI.
   they are never returned through the broker.
 - macOS Keychain reads skip items requiring authentication. Reads and refresh
   writes disable interactive Keychain UI; denied access produces a typed error.
+- Only the explicit `authorize` CLI can request a macOS access grant. Broker
+  frames cannot invoke it; authorization does not export or print credentials.
 - Usable OAuth credentials are cached in memory. Refresh can update the official
   credential record while preserving unrelated fields.
 - `CLAUDE_CONFIG_DIR` and `CLAUDE_SECURESTORAGE_CONFIG_DIR` follow the official
@@ -110,6 +127,7 @@ credentials, real session identifiers, private transcripts, or qualification log
 cargo fmt --all -- --check
 cargo clippy --locked --all-targets --all-features -- -D warnings
 cargo test --locked --all-targets
+python3 -m unittest discover -s tests -p 'test_*.py'
 cargo audit
 cargo package --locked --allow-dirty
 ```
@@ -148,11 +166,11 @@ are trademarks of their respective owners. Their use describes compatibility
 and does not imply endorsement. No official application source or assets are
 redistributed.
 
-Native Claude cloud conversations use the [version 1 broker contract](docs/broker-contract.md), including bounded discovery, immutable paged history, original-session continuation, and interruption. Local contract tests pass; real-service qualification remains blocked by noninteractive `authentication_required`. This support is experimental.
+Native Claude cloud conversations use the [version 1 broker contract](docs/broker-contract.md), including bounded discovery, immutable paged history, original-session continuation, and interruption. Local contract tests pass; real-service qualification remains blocked by `credential_access_denied`. This support is experimental.
 
 If `auth-status` reports `credential_access_denied`, the official credential record
-is present but macOS has denied this broker access. Interactive Keychain access
-stays disabled. Repeated login attempts or broker retries will not solve that
-access denial; real-service qualification must wait for legitimate noninteractive
-credential availability. Do not export tokens into Bluedex or change Keychain ACLs
+is present but macOS has denied this broker access. Install with the local signing
+installer and run `rclaude authorize` explicitly to request a remembered grant.
+Normal operations keep Keychain interaction disabled. Repeated broker retries do
+not request access. Do not export tokens into Bluedex or change Keychain ACLs
 automatically.
