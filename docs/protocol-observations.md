@@ -29,3 +29,13 @@ account, but a UI-disabled read returned `errSecAuthFailed` (-25293). This is an
 OS access denial rather than an absent login. The updated broker reports
 `credential_access_denied`, preserves its noninteractive guards, and does not
 retry prompts. Real-service qualification is still blocked.
+
+After explicit CLI authorization on 2026-10-09, the installed signed build could
+read the official login from a fresh process with Keychain UI disabled. Live
+discovery then returned `incompatible_version`. A changed executable lost access
+despite retaining the same self-signed certificate and designated requirement;
+restoring the authorized executable restored access. macOS independently assigns
+self-signed code a hash-based Keychain partition. This rules out a promise of
+retained authorization across local rebuilds. Cloud history, continuation,
+interruption, and all-client qualification remain outstanding. No real session
+was changed and no credentials or transcript contents were logged.

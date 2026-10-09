@@ -68,8 +68,8 @@ Source installation is the initial distribution method. The
 [release workflow](RELEASING.md) can publish attested Apple Silicon and Intel
 macOS binaries after personal and live qualification. There is no built-in updater.
 
-For durable local macOS Keychain authorization, build and install with a reusable
-local signing certificate, then request access explicitly:
+For explicit local macOS Keychain authorization, build and install with a local
+signing certificate, then request access explicitly:
 
 ```sh
 python3 scripts/install_local_macos.py
@@ -79,9 +79,14 @@ python3 scripts/install_local_macos.py
 macOS may ask for the signing key and the official Claude credential. Choose
 **Always Allow** to remember access. Enter passwords only in the macOS dialog.
 The installer retains a nonexportable signing key in the login Keychain and pins
-the executable identity to its certificate. Reuse this installer for updates:
-ordinary unsigned `cargo install` builds have a different identity and cannot
-reuse that grant. This local certificate is for development, not notarization.
+the executable designated requirement to its certificate. This local certificate
+is for development, not notarization. **It does not preserve credential grants
+across changed builds:** macOS also assigns self-signed code a hash-based Keychain
+partition. A changed binary can require another explicit authorization even with
+the same certificate and designated requirement. Normal broker calls never open
+that dialog. Apple development or Developer ID signing with a stable team identity
+is needed to avoid this hash-based partition; this installer does not supply it.
+See [Apple's partition identity implementation](https://github.com/apple-oss-distributions/Security/blob/main/securityd/src/clientid.cpp).
 
 ## Use
 
@@ -166,7 +171,7 @@ are trademarks of their respective owners. Their use describes compatibility
 and does not imply endorsement. No official application source or assets are
 redistributed.
 
-Native Claude cloud conversations use the [version 1 broker contract](docs/broker-contract.md), including bounded discovery, immutable paged history, original-session continuation, and interruption. Local contract tests pass; real-service qualification remains blocked by `credential_access_denied`. This support is experimental.
+Native Claude cloud conversations use the [version 1 broker contract](docs/broker-contract.md), including bounded discovery, immutable paged history, original-session continuation, and interruption. Local contract tests pass. After explicit authorization, the installed build can access the official login noninteractively, but live discovery returns `incompatible_version`. Full real-service qualification remains outstanding. This support is experimental.
 
 If `auth-status` reports `credential_access_denied`, the official credential record
 is present but macOS has denied this broker access. Install with the local signing

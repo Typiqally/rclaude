@@ -72,8 +72,21 @@ The explicit `rclaude authorize` CLI now permits a single native macOS access
 request after validating that the executable has a certificate signature and
 the expected identifier. This operation is absent from the broker protocol.
 The local macOS installer reuses one nonexportable signing key and pins its
-designated requirement to the public certificate, so rebuilt executables can
-retain a remembered grant. Offline tests cover unsigned-build refusal, protocol
+designated requirement to the public certificate. This does not preserve access
+across changed self-signed binaries: the additional Keychain partition condition
+uses the executable code hash. Offline tests cover unsigned-build refusal, protocol
 rejection, identity reuse, private temporary key cleanup, and restricted signing
 key import. Actual OS grants and live cloud qualification remain manual checks;
 passing those offline tests does not establish credential access.
+
+Live follow-up on 2026-10-09: installation and explicit native authorization
+succeeded. A separate UI-disabled process confirmed the official login was
+available. Handshake passed, but cloud discovery returned `incompatible_version`;
+no live history or conversation mutations were performed. A diagnostic rebuild
+with the same certificate and designated requirement lost credential access.
+Restoring the original authorized build restored noninteractive access. Read-only
+ACL metadata confirmed existing rclaude entries. [Apple's partition identity implementation](https://github.com/apple-oss-distributions/Security/blob/main/securityd/src/clientid.cpp)
+explains why self-signed builds cannot promise authorization across updates. The
+authorized build is installed; further live qualification remains blocked by the
+API incompatibility. No additional authorization attempts or ACL rewrites were
+performed to resolve the rebuild denial.

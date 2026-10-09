@@ -107,8 +107,9 @@ def main():
         run(["/usr/bin/codesign", "--verify", "--strict", str(destination)])
     finally:
         staged.unlink(missing_ok=True)
-    print(f"Installed stable certificate-signed broker: {destination}")
+    print(f"Installed local certificate-signed broker: {destination}")
     print("Normal broker requests never authorize interactively.")
+    print("Changed self-signed builds can require a new explicit Keychain grant.")
     print(f"Explicit authorization command: {destination} authorize")
 
 

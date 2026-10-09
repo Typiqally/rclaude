@@ -13,7 +13,11 @@ the package version in `Cargo.toml`.
 - Implement native cloud discovery and immutable paged canonical history across clients.
 - Continue, subscribe, and interrupt the original session with UUID correlation and monotonic durable sequences.
 - Reject incomplete catch-up and oversized events explicitly; whitelist metadata and streamed envelopes.
-- Local contract fixtures pass. Real-service qualification remains blocked by noninteractive authentication and is required before a qualified release.
+- Local contract fixtures pass. Explicit authorization enables noninteractive
+  access for the installed build, but live discovery returns `incompatible_version`.
+  Full real-service qualification is required before a qualified release.
+- Correct the local signing limitation: a reusable self-signed certificate does
+  not prevent hash-based Keychain authorization from changing across rebuilds.
 
 ## [Unreleased]
 
