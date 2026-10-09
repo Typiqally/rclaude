@@ -17,6 +17,8 @@ enum Command {
     Broker,
     Sessions,
     AuthStatus,
+    /// Grant Keychain access explicitly once, outside the broker protocol.
+    Authorize,
     Connect {
         #[arg(long)]
         session: String,
@@ -42,6 +44,13 @@ async fn execute() -> Result<(), ErrorCode> {
     let client = Client::new()?;
     match args.command {
         Command::Broker => rclaude::broker::run().await,
+        Command::Authorize => {
+            rclaude::auth::authorize_access()?;
+            println!(
+                "Official Claude credential access authorized. Broker calls remain noninteractive."
+            );
+            Ok(())
+        }
         Command::AuthStatus => {
             println!(
                 "Official credential record present; unexpired: {}",

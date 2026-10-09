@@ -120,14 +120,7 @@ fn credential_fallback(
 #[cfg(target_os = "macos")]
 fn read_keychain() -> Result<CredentialRecord, ErrorCode> {
     let service = keychain_service()?;
-    let account = std::env::var("USER")
-        .ok()
-        .filter(|s| {
-            !s.is_empty()
-                && s.bytes()
-                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
-        })
-        .unwrap_or_else(|| "claude-code-user".into());
+    let account = keychain_account();
     without_keychain_ui(|| {
         use security_framework::item::{ItemClass, ItemSearchOptions, SearchResult};
         let data = ItemSearchOptions::new()
@@ -254,6 +247,85 @@ pub async fn load() -> Result<OAuthToken, ErrorCode> {
         }
     }
     OAuthToken::from_json(&bytes)
+}
+
+/// An explicit CLI-only authorization. Never exposed through broker frames.
+/// The OS owns the authorization dialog and its password; no password is collected here.
+pub fn authorize_access() -> Result<(), ErrorCode> {
+    #[cfg(target_os = "macos")]
+    {
+        let executable =
+            std::env::current_exe().map_err(|_| ErrorCode::AuthorizationSetupRequired)?;
+        let verified = std::process::Command::new("/usr/bin/codesign")
+            .args(["--verify", "--strict"])
+            .arg(&executable)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map_err(|_| ErrorCode::AuthorizationSetupRequired)?;
+        if !verified.success() {
+            return Err(ErrorCode::AuthorizationSetupRequired);
+        }
+        let signature = std::process::Command::new("/usr/bin/codesign")
+            .args(["--display", "--verbose=2"])
+            .arg(&executable)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|_| ErrorCode::AuthorizationSetupRequired)?;
+        if !signature.status.success() || signature.stderr.len() > 16 * 1024 {
+            return Err(ErrorCode::AuthorizationSetupRequired);
+        }
+        let metadata = std::str::from_utf8(&signature.stderr)
+            .map_err(|_| ErrorCode::AuthorizationSetupRequired)?;
+        validate_authorization_signature(metadata)?;
+        let service = keychain_service()?;
+        let account = keychain_account();
+        // A single native read allows the user to choose Always Allow. There is no
+        // retry, refresh, export, ACL rewrite, or broker/renderer entry point.
+        let (bytes, _) = security_framework::os::macos::passwords::find_generic_password(
+            None, &service, &account,
+        )
+        .map_err(|error| {
+            if error.code() == -25300 {
+                ErrorCode::AuthenticationRequired
+            } else {
+                ErrorCode::CredentialAccessDenied
+            }
+        })?;
+        OAuthToken::from_json(&bytes)?;
+        Ok(())
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        Err(ErrorCode::Unsupported)
+    }
+}
+/// Reject an ad-hoc or unrelated signature before any interactive Keychain call.
+pub fn validate_authorization_signature(metadata: &str) -> Result<(), ErrorCode> {
+    if metadata
+        .lines()
+        .any(|line| line == "Identifier=io.github.typiqally.rclaude")
+        && metadata
+            .lines()
+            .any(|line| line.starts_with("Authority=") && line.len() > "Authority=".len())
+        && !metadata.lines().any(|line| line == "Signature=adhoc")
+    {
+        Ok(())
+    } else {
+        Err(ErrorCode::AuthorizationSetupRequired)
+    }
+}
+#[cfg(target_os = "macos")]
+fn keychain_account() -> String {
+    std::env::var("USER")
+        .ok()
+        .filter(|s| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b"._-".contains(&b))
+        })
+        .unwrap_or_else(|| "claude-code-user".into())
 }
 
 /// A path-free diagnostic; no token contents or identifiers are returned.

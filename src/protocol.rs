@@ -22,6 +22,8 @@ pub enum ErrorCode {
     TooLarge,
     #[error("official Claude login is required")]
     AuthenticationRequired,
+    #[error("install a certificate-signed rclaude build before granting Keychain access")]
+    AuthorizationSetupRequired,
     #[error("macOS denied access to official Claude credentials; interactive access is disabled")]
     CredentialAccessDenied,
     #[error("provider authentication scope is unavailable")]
